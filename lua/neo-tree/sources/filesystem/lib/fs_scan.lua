@@ -106,6 +106,28 @@ local render_context = function(context)
   context = nil
 end
 
+local job_complete_async = function(context, callback)
+  local state = context.state
+  local parent_id = context.parent_id
+  if #context.all_items == 0 then
+    log.info("No items, skipping git ignored/status lookups")
+    callback(context)
+  elseif state.filtered_items.hide_gitignored or state.enable_git_status then
+    git.mark_ignored(state, context.all_items, function(all_items)
+        if parent_id then
+          vim.list_extend(state.git_ignored, all_items)
+        else
+          state.git_ignored = all_items
+        end
+        log.debug("calling job_complete_async callback 1")
+        callback(context)
+      end)
+  else
+    log.debug("calling job_complete_async callback 2")
+    callback(context)
+  end
+end
+
 local job_complete = function(context)
   local state = context.state
   local parent_id = context.parent_id
@@ -135,8 +157,8 @@ local job_complete = function(context)
         state.git_ignored = all_items
       end
     end
+    render_context(context)
   end
-  render_context(context)
 end
 
 local function create_node(context, node)
@@ -197,6 +219,32 @@ local function scan_dir_sync(context, path)
       end
     end
   end
+end
+
+local function scan_dir_async_new(context, path)
+  local children = async.wrap(function (callback)
+    return get_children_async(path, callback)
+  end,1)()
+    log.debug("scan_dir_children: " .. path .. "children: " .. vim.inspect(children))
+ 
+    for _, child in ipairs(children) do
+      create_node(context, child)
+      if child.type == "directory" then
+        local grandchild_nodes = get_children_sync(child.path)
+        if
+          grandchild_nodes == nil
+          or #grandchild_nodes == 0
+          or #grandchild_nodes == 1 and grandchild_nodes[1].type == "directory"
+        then
+          scan_dir_sync(context, child.path)
+        end
+      end
+    end
+
+
+  log.debug("scan_dir_children - finish " .. path  )
+  process_node(context, path)
+  return path
 end
 
 local function scan_dir_async(context, path, callback)
@@ -471,7 +519,6 @@ M.get_items = function(state, parent_id, path_to_reveal, callback, async, recurs
   context.path_to_reveal = path_to_reveal
   context.recursive = recursive
   context.callback = callback
-
   -- Create root folder
   local root = file_items.create_item(context, parent_id or state.path, "directory")
   root.name = vim.fn.fnamemodify(root.path, ":~")
@@ -488,6 +535,86 @@ M.get_items = function(state, parent_id, path_to_reveal, callback, async, recurs
     -- open folders are loaded.
     handle_refresh_or_up(context, async)
   end
+end
+
+M.get_items_2 = function(state, parent_id, recursive)
+  local context = file_items.create_context()
+  context.state = state
+  context.parent_id = parent_id
+  context.path_to_reveal = nil
+  context.recursive = recursive
+  context.callback = nil
+  context.paths_to_load = {}
+
+  -- Create root folder
+  local root = file_items.create_item(context, parent_id or state.path, "directory")
+  root.name = vim.fn.fnamemodify(root.path, ":~")
+  root.loaded = true
+  root.search_pattern = state.search_pattern
+  context.root = root
+  context.folders[root.path] = root
+  state.default_expanded_nodes = state.force_open_folders or { state.path }
+
+    local filtered_items = state.filtered_items or {}
+    context.is_a_never_show_file = function(fname)
+      if fname then
+        local _, name = utils.split_path(fname)
+        if name then
+          if filtered_items.never_show and filtered_items.never_show[name] then
+            return true
+          end
+          if utils.is_filtered_by_pattern(filtered_items.never_show_by_pattern, fname, name) then
+            return true
+          end
+        end
+      end
+      return false
+    end
+    table.insert(context.paths_to_load, parent_id)
+    
+  local path = parent_id
+  log.debug("async_scan: ", path)
+
+  local scan_tasks = {}
+  for _, p in ipairs(context.paths_to_load) do
+     local scan_task = async.wrap(function(_callback)
+       log.debug("calling scan_dir_async_new")
+         async.run(function ()
+           scan_dir_async_new(context, p)
+           log.debug("after scan_dir_async_new")
+       end, _callback)
+     end, 1)
+     table.insert(scan_tasks, scan_task)
+  end
+
+
+  async.util.join(scan_tasks)
+  log.debug("after scan_tasks")
+
+    -- async.util.run_all(
+    --   scan_tasks,
+    --   vim.schedule_wrap(function()
+  local jba = async.wrap(function (_callback)
+    log.debug("calling job_complete_async")
+    return job_complete_async(context, _callback)
+  end, 1)
+  jba()
+
+  local finish =  async.wrap(function (_context, _callback)
+    vim.schedule(function ()
+        log.debug("finish: before render context")
+        render_context(_context)
+        log.debug("finish: before callback")
+        _callback()
+    end)
+  end,2)
+  log.debug("before finish")
+  finish(context)
+  log.debug("after finish")
+    --   end)
+    -- )
+
+
 end
 
 M.stop_watchers = function(state)

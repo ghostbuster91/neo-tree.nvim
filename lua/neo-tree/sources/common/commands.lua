@@ -2,6 +2,7 @@
 
 local vim = vim
 local fs_actions = require("neo-tree.sources.filesystem.lib.fs_actions")
+local fs = require("neo-tree.sources.filesystem")
 local utils = require("neo-tree.utils")
 local renderer = require("neo-tree.ui.renderer")
 local events = require("neo-tree.events")
@@ -108,35 +109,32 @@ M.add_directory = function(state, callback)
   fs_actions.create_directory(in_directory, callback, using_root_directory)
 end
 
-M.expand_all_nodes = function(state, toggle_directory)
-  if toggle_directory == nil then
-    toggle_directory = function(_, node)
-      node:expand()
-    end
-  end
-  --state.explicitly_opened_directories = state.explicitly_opened_directories or {}
+M.expand_all_nodes = function(state)
+  local async = require("plenary.async")
 
-  local expand_node
-  expand_node = function(node)
-    local id = node:get_id()
-    if node.type == "directory" and not node:is_expanded() then
-      toggle_directory(state, node)
-      node = state.tree:get_node(id)
-    end
-    local children = state.tree:get_nodes(id)
-    if children then
-      for _, child in ipairs(children) do
-        if child.type == "directory" then
-          expand_node(child)
-        end
-      end
-    end
+  local expand_node = function(node, _callback)
+    log.debug("load directory ".. node:get_id())
+    fs.load_directory_async(state,node,_callback)
   end
 
+  local tasks = {}
   for _, node in ipairs(state.tree:get_nodes()) do
-    expand_node(node)
+    local task = async.wrap(function (callback)
+        log.debug("async expand node" .. node.name)
+        expand_node(node, callback)
+    end, 1)
+    table.insert(tasks, task)
   end
-  renderer.redraw(state)
+    log.debug("run all on top " .. #tasks)
+    async.util.run_all(
+      tasks,
+      function ()
+        log.debug("run all on top - finish")
+        vim.schedule_wrap(function()
+          renderer.redraw(state)
+        end)
+      end
+    )
 end
 
 M.close_node = function(state, callback)

@@ -406,7 +406,7 @@ M.toggle_directory = function(state, node, path_to_reveal, skip_redraw, recursiv
     local id = node:get_id()
     state.explicitly_opened_directories[id] = true
     renderer.position.set(state, nil)
-    fs_scan.get_items(state, id, path_to_reveal, callback, false, recursive)
+    fs_scan.get_items(state, id, path_to_reveal, callback, true, recursive)
   elseif node:has_children() then
     local updated = false
     if node:is_expanded() then
@@ -427,5 +427,70 @@ M.toggle_directory = function(state, node, path_to_reveal, skip_redraw, recursiv
     renderer.redraw(state)
   end
 end
+
+local function expand_loaded_rec(node, state, to_load)
+    if node.loaded==false then
+        table.insert(to_load, node)
+    else
+        if not node:is_expanded() then
+          node:expand()
+          state.explicitly_opened_directories[node:get_id()] = true
+        end
+        local children = state.tree:get_nodes(node:get_id())
+        log.debug("children of " .. node.name .. " - "  .. #children)
+        if children then
+          log.debug("children of " .. node.name .. " - "  .. #children)
+          for _, child in ipairs(children) do
+            if child.type == "directory" then
+               expand_loaded_rec(child, state, to_load)
+            else
+              log.debug("skipping child " .. vim.inspect(child.name))
+            end
+          end
+        else
+          log.debug("no kids")
+        end
+    end
+end
+
+local function call_rec(node, state, to_load, progress, root_callback)
+    log.debug("call_rec ".. vim.inspect(node) .. "toload: " .. vim.inspect(to_load) .. " progress:" .. progress)
+    expand_loaded_rec(node, state, to_load)
+    progress=progress+1
+    if progress <= #to_load then
+        M.load_directory_async(state, to_load[progress], function ()
+            call_rec(to_load[progress], state, to_load, progress, root_callback)
+        end)
+    else
+        root_callback()
+    end
+end
+
+---Expands or collapses the current node.
+M.load_directory_async = function(state, node, callback)
+  log.debug("load_directory_async " .. vim.inspect(node))
+  local async = require("plenary.async")
+  if node.type ~= "directory" then
+    callback()
+  end
+  state.explicitly_opened_directories = state.explicitly_opened_directories or {}
+  if node.loaded == false then
+    local id = node:get_id()
+    state.explicitly_opened_directories[id] = true
+    renderer.position.set(state, nil)
+    async.run(function ()
+        fs_scan.get_items_2(state, id, true)
+    end, function ()
+        expand_loaded_rec(node ,state, {})
+        callback()
+    end)
+  else
+    local to_load = {}
+    local progress = 1
+    call_rec(node, state, to_load, progress, callback)
+  end
+end
+
+
 
 return M

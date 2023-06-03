@@ -113,12 +113,13 @@ M.mark_ignored = function(state, items, callback)
         enabled_recording = true,
         writer = folder_items,
         on_start = function()
-          log.trace("IGNORED: Running async git with args: ", args)
+          log.debug("IGNORED: Running async git with args: ", args)
+          log.debug("IGNORED: folder items: ", folder_items)
         end,
         on_exit = function(self, code, _)
           local result
           if code ~= 0 then
-            log.debug("Failed to load ignored files for", state.path, ":", self:stderr_result())
+            log.debug("Failed to load ignored files for", folder, ":", self:stderr_result())
             result = {}
           else
             result = self:result()
@@ -127,6 +128,7 @@ M.mark_ignored = function(state, items, callback)
           progress = progress + 1
           if progress == #jobs then
             finalize(all_results)
+            log.debug("calling master callback all git_ignored finished")
             callback(all_results)
           end
         end,
