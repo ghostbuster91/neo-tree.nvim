@@ -111,24 +111,19 @@ local job_complete_async = function(context)
   local parent_id = context.parent_id
   if #context.all_items == 0 then
     log.info("No items, skipping git ignored/status lookups")
-    return context
   elseif state.filtered_items.hide_gitignored or state.enable_git_status then
-    local mark_ignored_async = async.wrap(function (_callback)
-      git.mark_ignored(state, context.all_items, _callback)
-    end, 1)
-    local all_items = mark_ignored_async()
+    local mark_ignored_async = async.wrap(function (_state, _all_items, _callback)
+      git.mark_ignored(_state, _all_items, _callback)
+    end, 3)
+    local all_items = mark_ignored_async(state, context.all_items)
 
     if parent_id then
       vim.list_extend(state.git_ignored, all_items)
     else
       state.git_ignored = all_items
     end
-    log.debug("calling job_complete_async callback 1")
-    return context
-  else
-    log.debug("calling job_complete_async callback 2")
-    return context
   end
+  return context
 end
 
 local job_complete = function(context)
