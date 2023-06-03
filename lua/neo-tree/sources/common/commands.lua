@@ -112,6 +112,7 @@ end
 
 ---Expand all nodes
 ---@param state table The state of the source
+---@param node table A node to expand
 M.expand_all_nodes = function(state, node)
   log.debug("Expanding all nodes under " .. node:get_id())
   local task = function ()
