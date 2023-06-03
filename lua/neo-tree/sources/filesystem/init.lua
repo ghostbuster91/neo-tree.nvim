@@ -406,7 +406,7 @@ M.toggle_directory = function(state, node, path_to_reveal, skip_redraw, recursiv
     local id = node:get_id()
     state.explicitly_opened_directories[id] = true
     renderer.position.set(state, nil)
-    fs_scan.get_items(state, id, path_to_reveal, callback, true, recursive)
+    fs_scan.get_items(state, id, path_to_reveal, callback, false, recursive)
   elseif node:has_children() then
     local updated = false
     if node:is_expanded() then
