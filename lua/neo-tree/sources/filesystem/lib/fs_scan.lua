@@ -559,14 +559,12 @@ M.get_items_2 = function(state, parent_id, recursive)
     return false
   end
   table.insert(context.paths_to_load, parent_id)
-    
+ 
   local scan_tasks = {}
   for _, p in ipairs(context.paths_to_load) do
-     local scan_task = async.wrap(function(_callback)
-         async.run(function ()
-           scan_dir_async(context, p)
-       end, _callback)
-     end, 1)
+     local scan_task = function ()
+       scan_dir_async(context, p)
+     end
      table.insert(scan_tasks, scan_task)
   end
   async.util.join(scan_tasks)

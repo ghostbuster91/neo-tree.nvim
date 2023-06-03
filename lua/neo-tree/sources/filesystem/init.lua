@@ -10,6 +10,7 @@ local log = require("neo-tree.log")
 local manager = require("neo-tree.sources.manager")
 local git = require("neo-tree.git")
 local glob = require("neo-tree.sources.filesystem.lib.globtopattern")
+local async = require("plenary.async")
 
 local M = {
   name = "filesystem",
@@ -450,43 +451,43 @@ local function expand_loaded(node, state, to_load)
     end
 end
 
-local function load_all_children(node, state, to_load, progress, callback)
+local function expand_and_load(node, state, to_load, progress, callback)
     expand_loaded(node, state, to_load)
-    progress=progress+1
+    progress = progress + 1
     if progress <= #to_load then
-        M.expand_directory(state, to_load[progress], function ()
-            load_all_children(to_load[progress], state, to_load, progress, callback)
+        async.run(function ()
+          M.expand_directory(state, to_load[progress])
+        end, function ()
+          expand_and_load(to_load[progress], state, to_load, progress, callback)
         end)
     else
         callback()
     end
 end
 
----Expands or collapses the current node.
-M.expand_directory = function(state, node, callback)
-  log.debug("load_directory_async " .. node:get_id())
-  local async = require("plenary.async")
+---Expands given node recursively loaded all descendant nodes if needed
+---async method
+---@param state table current state of the tree
+---@param node any
+M.expand_directory = function(state, node)
   if node.type ~= "directory" then
-    callback()
+    return
   end
   state.explicitly_opened_directories = state.explicitly_opened_directories or {}
   if node.loaded == false then
     local id = node:get_id()
     state.explicitly_opened_directories[id] = true
     renderer.position.set(state, nil)
-    async.run(function ()
-        fs_scan.get_items_2(state, id, true)
-    end, function ()
-        expand_loaded(node ,state, {})
-        callback()
-    end)
+    fs_scan.get_items_2(state, id, true)
+    expand_loaded(node ,state, {})
   else
+    local expand_and_load_w = async.wrap(function (_node, _state, _to_load,_progress, _callback)
+        expand_and_load(_node, _state, _to_load, _progress, _callback)
+    end, 5)
     local to_load = {}
     local progress = 1
-    load_all_children(node, state, to_load, progress, callback)
+    expand_and_load_w(node, state, to_load, progress)
   end
 end
-
-
 
 return M

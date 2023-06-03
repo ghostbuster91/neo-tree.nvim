@@ -114,9 +114,9 @@ end
 ---@param state table The state of the source
 M.expand_all_nodes = function(state, node)
   log.debug("Expanding all nodes under " .. node:get_id())
-  local task = async.wrap(function (_callback)
-    fs.expand_directory(state, node ,_callback)
-  end, 1)
+  local task = function ()
+    fs.expand_directory(state, node)
+  end
   async.run(
       task,
       function ()
