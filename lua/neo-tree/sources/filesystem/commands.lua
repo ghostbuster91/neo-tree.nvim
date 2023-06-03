@@ -68,7 +68,7 @@ M.delete_visual = function(state, selected_nodes)
 end
 
 M.expand_all_nodes = function(state)
-  cc.expand_all_nodes(state)
+  cc.expand_all_nodes(state, state.tree:get_node(state.path))
 end
 
 ---Shows the filter input, which will filter the tree.

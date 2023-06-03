@@ -11,6 +11,7 @@ local popups = require("neo-tree.ui.popups")
 local log = require("neo-tree.log")
 local help = require("neo-tree.sources.common.help")
 local Preview = require("neo-tree.sources.common.preview")
+local async = require("plenary.async")
 
 ---Gets the node parent folder
 ---@param state table to look for nodes
@@ -109,27 +110,17 @@ M.add_directory = function(state, callback)
   fs_actions.create_directory(in_directory, callback, using_root_directory)
 end
 
-M.expand_all_nodes = function(state)
-  local async = require("plenary.async")
-
-  local expand_node = function(node, _callback)
-    log.debug("load directory ".. node:get_id())
-    fs.load_directory_async(state,node,_callback)
-  end
-
-  local tasks = {}
-  for _, node in ipairs(state.tree:get_nodes()) do
-    local task = async.wrap(function (callback)
-        log.debug("async expand node" .. node.name)
-        expand_node(node, callback)
-    end, 1)
-    table.insert(tasks, task)
-  end
-    log.debug("run all on top " .. #tasks)
-    async.util.run_all(
-      tasks,
+---Expand all nodes
+---@param state table The state of the source
+M.expand_all_nodes = function(state, node)
+  log.debug("Expanding all nodes under " .. node:get_id())
+  local task = async.wrap(function (_callback)
+    fs.expand_directory(state, node ,_callback)
+  end, 1)
+  async.run(
+      task,
       function ()
-        log.debug("run all on top - finish")
+        log.debug("All nodes expanded - redrawing")
         vim.schedule_wrap(function()
           renderer.redraw(state)
         end)

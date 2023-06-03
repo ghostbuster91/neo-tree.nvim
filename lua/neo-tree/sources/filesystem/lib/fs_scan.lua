@@ -106,25 +106,28 @@ local render_context = function(context)
   context = nil
 end
 
-local job_complete_async = function(context, callback)
+local job_complete_async = function(context)
   local state = context.state
   local parent_id = context.parent_id
   if #context.all_items == 0 then
     log.info("No items, skipping git ignored/status lookups")
-    callback(context)
+    return context
   elseif state.filtered_items.hide_gitignored or state.enable_git_status then
-    git.mark_ignored(state, context.all_items, function(all_items)
-        if parent_id then
-          vim.list_extend(state.git_ignored, all_items)
-        else
-          state.git_ignored = all_items
-        end
-        log.debug("calling job_complete_async callback 1")
-        callback(context)
-      end)
+    local mark_ignored_async = async.wrap(function (_callback)
+      git.mark_ignored(state, context.all_items, _callback)
+    end, 1)
+    local all_items = mark_ignored_async()
+
+    if parent_id then
+      vim.list_extend(state.git_ignored, all_items)
+    else
+      state.git_ignored = all_items
+    end
+    log.debug("calling job_complete_async callback 1")
+    return context
   else
     log.debug("calling job_complete_async callback 2")
-    callback(context)
+    return context
   end
 end
 
@@ -221,51 +224,33 @@ local function scan_dir_sync(context, path)
   end
 end
 
-local function scan_dir_async_new(context, path)
-  local children = async.wrap(function (callback)
+local function scan_dir_async(context, path)
+  log.debug("scan_dir_async - start " .. path)
+
+  local get_children = async.wrap(function (callback)
     return get_children_async(path, callback)
-  end,1)()
-    log.debug("scan_dir_children: " .. path .. "children: " .. vim.inspect(children))
- 
-    for _, child in ipairs(children) do
-      create_node(context, child)
-      if child.type == "directory" then
-        local grandchild_nodes = get_children_sync(child.path)
-        if
-          grandchild_nodes == nil
-          or #grandchild_nodes == 0
-          or #grandchild_nodes == 1 and grandchild_nodes[1].type == "directory"
-        then
-          scan_dir_sync(context, child.path)
-        end
+  end, 1)
+
+  local children = get_children()
+  for _, child in ipairs(children) do
+    create_node(context, child)
+    if child.type == "directory" then
+      local grandchild_nodes = get_children_sync(child.path)
+      if
+        grandchild_nodes == nil
+        or #grandchild_nodes == 0
+        or #grandchild_nodes == 1 and grandchild_nodes[1].type == "directory"
+      then
+        scan_dir_sync(context, child.path)
       end
     end
+  end
 
-
-  log.debug("scan_dir_children - finish " .. path  )
+  log.debug("scan_dir_async - finish " .. path)
   process_node(context, path)
   return path
 end
 
-local function scan_dir_async(context, path, callback)
-  get_children_async(path, function(children)
-    for _, child in ipairs(children) do
-      create_node(context, child)
-      if child.type == "directory" then
-        local grandchild_nodes = get_children_sync(child.path)
-        if
-          grandchild_nodes == nil
-          or #grandchild_nodes == 0
-          or #grandchild_nodes == 1 and grandchild_nodes[1].type == "directory"
-        then
-          scan_dir_sync(context, child.path)
-        end
-      end
-    end
-    process_node(context, path)
-    callback(path)
-  end)
-end
 
 -- async_scan scans all the directories in context.paths_to_load
 -- and adds them as items to render in the UI.
@@ -277,7 +262,9 @@ local function async_scan(context, path)
     local scan_tasks = {}
     for _, p in ipairs(context.paths_to_load) do
       local scan_task = async.wrap(function(callback)
-        scan_dir_async(context, p, callback)
+        async.run(function ()
+            scan_dir_async(context, p)
+        end, callback)
       end, 1)
       table.insert(scan_tasks, scan_task)
     end
@@ -537,6 +524,7 @@ M.get_items = function(state, parent_id, path_to_reveal, callback, async, recurs
   end
 end
 
+-- async method
 M.get_items_2 = function(state, parent_id, recursive)
   local context = file_items.create_context()
   context.state = state
@@ -555,66 +543,43 @@ M.get_items_2 = function(state, parent_id, recursive)
   context.folders[root.path] = root
   state.default_expanded_nodes = state.force_open_folders or { state.path }
 
-    local filtered_items = state.filtered_items or {}
-    context.is_a_never_show_file = function(fname)
-      if fname then
-        local _, name = utils.split_path(fname)
-        if name then
-          if filtered_items.never_show and filtered_items.never_show[name] then
-            return true
-          end
-          if utils.is_filtered_by_pattern(filtered_items.never_show_by_pattern, fname, name) then
-            return true
-          end
+  local filtered_items = state.filtered_items or {}
+  context.is_a_never_show_file = function(fname)
+    if fname then
+      local _, name = utils.split_path(fname)
+      if name then
+        if filtered_items.never_show and filtered_items.never_show[name] then
+          return true
+        end
+        if utils.is_filtered_by_pattern(filtered_items.never_show_by_pattern, fname, name) then
+          return true
         end
       end
-      return false
     end
-    table.insert(context.paths_to_load, parent_id)
+    return false
+  end
+  table.insert(context.paths_to_load, parent_id)
     
-  local path = parent_id
-  log.debug("async_scan: ", path)
-
   local scan_tasks = {}
   for _, p in ipairs(context.paths_to_load) do
      local scan_task = async.wrap(function(_callback)
-       log.debug("calling scan_dir_async_new")
          async.run(function ()
-           scan_dir_async_new(context, p)
-           log.debug("after scan_dir_async_new")
+           scan_dir_async(context, p)
        end, _callback)
      end, 1)
      table.insert(scan_tasks, scan_task)
   end
-
-
   async.util.join(scan_tasks)
-  log.debug("after scan_tasks")
 
-    -- async.util.run_all(
-    --   scan_tasks,
-    --   vim.schedule_wrap(function()
-  local jba = async.wrap(function (_callback)
-    log.debug("calling job_complete_async")
-    return job_complete_async(context, _callback)
-  end, 1)
-  jba()
+  job_complete_async(context)
 
-  local finish =  async.wrap(function (_context, _callback)
+  local finalize =  async.wrap(function (_context, _callback)
     vim.schedule(function ()
-        log.debug("finish: before render context")
         render_context(_context)
-        log.debug("finish: before callback")
         _callback()
     end)
-  end,2)
-  log.debug("before finish")
-  finish(context)
-  log.debug("after finish")
-    --   end)
-    -- )
-
-
+  end, 2)
+  finalize(context)
 end
 
 M.stop_watchers = function(state)
