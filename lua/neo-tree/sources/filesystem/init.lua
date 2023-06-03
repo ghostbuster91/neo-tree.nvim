@@ -471,10 +471,9 @@ local function expand_and_load(node, state)
       for _,v in ipairs(to_load_current) do
         table.insert(to_load, v)
       end
-      progress = progress + 1
       if progress <= #to_load then
         M.expand_directory(state, to_load[progress])
-        rec(to_load, progress)
+        rec(to_load, progress + 1)
       end
     end
     rec({}, 1)
@@ -485,6 +484,7 @@ end
 ---@param state table current state of the source
 ---@param node table a node to expand
 M.expand_directory = function(state, node)
+  log.debug("Expanding directory " .. node:get_id())
   if node.type ~= "directory" then
     return
   end
