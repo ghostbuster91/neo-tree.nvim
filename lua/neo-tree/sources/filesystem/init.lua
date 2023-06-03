@@ -429,46 +429,61 @@ M.toggle_directory = function(state, node, path_to_reveal, skip_redraw, recursiv
   end
 end
 
--- recursively expand all loaded nodes under the given node
--- and populate to_load table with all paths that are not loaded yet
-local function expand_loaded(node, state, to_load)
-    if node.loaded==false then
-        table.insert(to_load, node)
-    else
-        if not node:is_expanded() then
-          node:expand()
-          state.explicitly_opened_directories[node:get_id()] = true
+--- Recursively expand all loaded nodes under the given node
+--- returns table with all discovered nodes that need to be loaded 
+---@param node table a node to expand
+---@param state table current state of the source
+---@return table discovered nodes that need to be loaded
+local function expand_loaded(node, state)
+    local function rec(_node, to_load)
+      if _node.loaded == false then
+        table.insert(to_load, _node)
+      else
+        if not _node:is_expanded() then
+          _node:expand()
+          state.explicitly_opened_directories[_node:get_id()] = true
         end
-        local children = state.tree:get_nodes(node:get_id())
-        log.trace("Expanding childrens of " .. node.name)
+        local children = state.tree:get_nodes(_node:get_id())
+        log.debug("Expanding childrens of " .. _node:get_id())
         for _, child in ipairs(children) do
           if child.type == "directory" then
-             expand_loaded(child, state, to_load)
+             rec(child, to_load)
           else
-            log.debug("Child: " .. child.name .. " is not a directory, skipping")
+            log.trace("Child: " .. child.name .. " is not a directory, skipping")
           end
         end
+      end
     end
+
+    local to_load = {}
+    rec(node, to_load)
+    return to_load
 end
 
-local function expand_and_load(node, state, to_load, progress, callback)
-    expand_loaded(node, state, to_load)
-    progress = progress + 1
-    if progress <= #to_load then
-        async.run(function ()
-          M.expand_directory(state, to_load[progress])
-        end, function ()
-          expand_and_load(to_load[progress], state, to_load, progress, callback)
-        end)
-    else
-        callback()
+--- Recursively expands all nodes under the given node
+--- loading nodes if necessary.
+--- asyn method
+---@param node table a node to expand
+---@param state table current state of the source
+local function expand_and_load(node, state)
+    local function rec(to_load, progress)
+      local to_load_current = expand_loaded(node, state)
+      for _,v in ipairs(to_load_current) do
+        table.insert(to_load, v)
+      end
+      progress = progress + 1
+      if progress <= #to_load then
+        M.expand_directory(state, to_load[progress])
+        rec(to_load, progress)
+      end
     end
+    rec({}, 1)
 end
 
----Expands given node recursively loaded all descendant nodes if needed
+---Expands given node recursively loading all descendant nodes if needed
 ---async method
----@param state table current state of the tree
----@param node any
+---@param state table current state of the source
+---@param node table a node to expand
 M.expand_directory = function(state, node)
   if node.type ~= "directory" then
     return
@@ -478,15 +493,11 @@ M.expand_directory = function(state, node)
     local id = node:get_id()
     state.explicitly_opened_directories[id] = true
     renderer.position.set(state, nil)
-    fs_scan.get_items_2(state, id, true)
-    expand_loaded(node ,state, {})
+    fs_scan.get_dir_items_async(state, id, true)
+    -- ignore results as we know here that all descendant nodes have been already loaded
+    expand_loaded(node ,state)
   else
-    local expand_and_load_w = async.wrap(function (_node, _state, _to_load,_progress, _callback)
-        expand_and_load(_node, _state, _to_load, _progress, _callback)
-    end, 5)
-    local to_load = {}
-    local progress = 1
-    expand_and_load_w(node, state, to_load, progress)
+    expand_and_load(node, state)
   end
 end
 
